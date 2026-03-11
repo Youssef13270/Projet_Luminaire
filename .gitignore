@@ -1,13 +1,13 @@
-.idea
+*.idea
 
 venv
 
-.qtcreator
+*.qtcreator
 
-.idea
+*.idea
 
 build
 
-.qtcreator
+*.qtcreator
 
 build
