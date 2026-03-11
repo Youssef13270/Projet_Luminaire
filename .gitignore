@@ -1,13 +1,13 @@
-*.idea
+Python_to_C/.idea
 
-venv
+pythonProject/venv
 
-*.qtcreator
+Python_to_C/.qtcreator
 
-*.idea
+pythonProject/.idea
 
 build
 
-*.qtcreator
+Python_to_C/Projet_luminaire_C/.qtcreator
 
 build
