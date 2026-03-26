@@ -7,17 +7,18 @@ from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
 
 
-class IHM_Luminaire_Pro(QMainWindow):
+# ==============================================================================
+# CLASSE : Gestion de toutes les communications (Série + LoRa)
+# ==============================================================================
+class CommunicationManager:
     def __init__(self):
-        super().__init__()
-
-        # --- VARIABLES ---
+        self.lora = None
+        self.ser_capteurs = None
         self.buffer_serie = ""
-        self.tension_actuelle = 0.0
-        self.temperature_actuelle = 0.0
-        self.compteur_lora = 0
+        self._init_lora()
+        self._init_capteurs()
 
-        # --- CONFIGURATION LoRa (Pins 8/10) ---
+    def _init_lora(self):
         try:
             self.lora = serial.Serial('/dev/ttyS0', 9600, timeout=1)
             self.lora.write(b"AT+JOIN\r\n")
@@ -26,7 +27,7 @@ class IHM_Luminaire_Pro(QMainWindow):
             print(f"Erreur LoRa : {e}")
             self.lora = None
 
-        # --- CONFIGURATION CAPTEURS (PC - Pins 32/33) ---
+    def _init_capteurs(self):
         try:
             self.ser_capteurs = serial.Serial('/dev/ttyAMA5', 9600, timeout=0.05)
             print("Lecture PC initialisée sur /dev/ttyAMA5")
@@ -34,7 +35,77 @@ class IHM_Luminaire_Pro(QMainWindow):
             print(f"Erreur Capteurs : {e}")
             self.ser_capteurs = None
 
-        # --- DESIGN (Ton Style Original) ---
+    def lire_capteurs(self):
+        """
+        Lecture IDENTIQUE au code original : un caractère par appel,
+        on accumule dans le buffer jusqu'à trouver '!'.
+        Retourne (tension, temperature) ou None.
+        """
+        if self.ser_capteurs and self.ser_capteurs.in_waiting > 0:
+            # --- EXACTEMENT comme le code original ---
+            char = self.ser_capteurs.read().decode('utf-8', errors='ignore')
+            self.buffer_serie += char
+
+            if "!" in self.buffer_serie:
+                start = self.buffer_serie.find("?")
+                end = self.buffer_serie.find("!")
+                if start != -1 and end > start:
+                    msg = self.buffer_serie[start + 1:end].split(",")
+                    self.buffer_serie = ""
+                    if len(msg) == 2:
+                        try:
+                            tension = float(msg[0])
+                            temperature = float(msg[1])
+                            # Vérification de plage correctement sur float
+                            if 11.0 <= tension <= 14.0:
+                                return tension, temperature
+                            else:
+                                print(f"⚠️ Tension hors plage : {tension} V")
+                                return None
+                        except ValueError as e:
+                            print(f"⚠️ Données invalides : {msg} → {e}")
+                            return None
+                else:
+                    self.buffer_serie = ""
+        return None
+
+    def envoyer_lora(self, tension: float, temperature: float):
+        if self.lora is None or not self.lora.is_open:
+            print("⚠️ LoRa non disponible.")
+            return
+        try:
+            self.lora.write(b'AT+KEY=APPKEY,"D0B958CBF80F95F9BCAA57276EF075F3"\r\n')
+            time.sleep(0.5)
+            self.lora.write(b"AT+JOIN\r\n")
+            time.sleep(0.5)
+            self.lora.write(f'AT+MSG="{tension:.2f}V"\r\n'.encode('utf-8'))
+            time.sleep(0.3)
+            self.lora.write(f'AT+MSG="{temperature:.2f}C"\r\n'.encode('utf-8'))
+            print(f"✅ LoRa envoyé → {tension:.2f}V | {temperature:.2f}°C")
+        except Exception as e:
+            print(f"❌ Erreur LoRa : {e}")
+            self.lora = None
+
+    def fermer(self):
+        if self.lora and self.lora.is_open:
+            self.lora.close()
+        if self.ser_capteurs and self.ser_capteurs.is_open:
+            self.ser_capteurs.close()
+
+
+# ==============================================================================
+# CLASSE : Fenêtre principale de l'IHM
+# ==============================================================================
+class IHM_Luminaire_Pro(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self.tension_actuelle = 0.0
+        self.temperature_actuelle = 0.0
+        self.compteur_lora = 0
+
+        self.comm = CommunicationManager()
+
         self.setWindowTitle("Supervision Luminaire - IR3")
         self.setGeometry(100, 100, 900, 550)
         self.setStyleSheet("QMainWindow { background-color: #1e1e1e; } QLabel { color: white; }")
@@ -43,7 +114,6 @@ class IHM_Luminaire_Pro(QMainWindow):
         self.setCentralWidget(central_widget)
         layout_principal = QVBoxLayout(central_widget)
 
-        # Grille de l'IHM
         grid = QGridLayout()
         layout_principal.addLayout(grid)
 
@@ -77,7 +147,7 @@ class IHM_Luminaire_Pro(QMainWindow):
         layout_principal.addWidget(btn_on)
         layout_principal.addWidget(btn_off)
 
-        # --- TIMER (Lecture 20 fois par seconde) ---
+        # Timer 50ms — identique à l'original
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_all)
         self.timer.start(50)
@@ -88,47 +158,22 @@ class IHM_Luminaire_Pro(QMainWindow):
         return frame
 
     def update_all(self):
-        # 1. Lecture du port PC (avec ? et !)
-        if self.ser_capteurs and self.ser_capteurs.in_waiting > 0:
-            char = self.ser_capteurs.read().decode('utf-8', errors='ignore')
-            self.buffer_serie += char
-            if "!" in self.buffer_serie:
-                start = self.buffer_serie.find("?")
-                end = self.buffer_serie.find("!")
-                if start != -1 and end > start:
-                    msg = self.buffer_serie[start + 1:end].split(",")
-                    if len(msg) == 2:
-                        if 11 <= msg[0] <= 14:
-                            self.tension_actuelle = float(msg[0])
-                        self.temperature_actuelle = float(msg[1])
-                        self.lbl_tension.setText(f"{self.tension_actuelle} V")
-                        self.lbl_temp.setText(f"{self.temperature_actuelle} °C")
-                        p = int((self.tension_actuelle / 12.6) * 100)
-                        self.barre_batterie.setValue(max(0, min(100, p)))
-                    self.buffer_serie = ""
+        resultat = self.comm.lire_capteurs()
+        if resultat is not None:
+            self.tension_actuelle, self.temperature_actuelle = resultat
+            self.lbl_tension.setText(f"{self.tension_actuelle} V")
+            self.lbl_temp.setText(f"{self.temperature_actuelle} °C")
+            p = int((self.tension_actuelle / 12.6) * 100)
+            self.barre_batterie.setValue(max(0, min(100, p)))
 
-        # 2. Envoi LoRa toutes les 20 secondes (400 * 50ms)
         self.compteur_lora += 1
         if self.compteur_lora >= 400:
-            self.envoyer_lora(msg)
+            self.comm.envoyer_lora(self.tension_actuelle, self.temperature_actuelle)
             self.compteur_lora = 0
 
-    def envoyer_lora(self,msg):
-        """Fonction qui crypte et envoie les données sur TTN"""
-        if self.lora and self.lora.is_open:
-            try:
-                self.lora = serial.Serial('/dev/ttyS0', 9600, timeout=1)
-                self.lora.write(b'AT+KEY=APPKEY,"D0B958CBF80F95F9BCAA57276EF075F3"\r\n')
-                time.sleep(0.5)
-                # 2. Lancer le Join
-                self.lora.write(b"AT+JOIN\r\n")
-                print("📡 LoRa : Configuration clé et envoi AT+JOIN...")
-                self.lora.write(b"AT+MSG=" + self.tension_actuelle + '"')
-                self.lora.write(b"AT+MSG="+self.temperature_actuelle+'"')
-
-            except Exception as e:
-                print(f"❌ Erreur LoRa : {e}")
-                self.lora = None
+    def closeEvent(self, event):
+        self.comm.fermer()
+        event.accept()
 
 
 if __name__ == "__main__":
