@@ -110,20 +110,22 @@ class IHM_Luminaire_Pro(QMainWindow):
         # 2. Envoi LoRa toutes les 20 secondes (400 * 50ms)
         self.compteur_lora += 1
         if self.compteur_lora >= 400:
-            self.envoyer_lora()
+            self.envoyer_lora(msg)
             self.compteur_lora = 0
 
-    def envoyer_lora(self):
+    def envoyer_lora(self,msg):
         """Fonction qui crypte et envoie les données sur TTN"""
         if self.lora and self.lora.is_open:
             try:
                 self.lora = serial.Serial('/dev/ttyS0', 9600, timeout=1)
-                # 1. Configurer la clé d'abord !
                 self.lora.write(b'AT+KEY=APPKEY,"D0B958CBF80F95F9BCAA57276EF075F3"\r\n')
                 time.sleep(0.5)
                 # 2. Lancer le Join
                 self.lora.write(b"AT+JOIN\r\n")
                 print("📡 LoRa : Configuration clé et envoi AT+JOIN...")
+                self.lora.write(b"AT+MSG=" + self.tension_actuelle + '"')
+                self.lora.write(b"AT+MSG="+self.temperature_actuelle+'"')
+
             except Exception as e:
                 print(f"❌ Erreur LoRa : {e}")
                 self.lora = None
